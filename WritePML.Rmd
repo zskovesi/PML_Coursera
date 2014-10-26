@@ -1,0 +1,130 @@
+---
+title: "Practical Machine Learning WriteUp"
+author: "zskovesi"
+date: "Saturday, October 25, 2014"
+output: html_document
+---
+---
+
+## Background, description of data
+
+The data consists of a set of measurements from sensors attached to subjects performing a variety of physical movements. The task is to prepare a model which will correctly classify activities, given unlabelled sets of observations.
+
+Data can be downloaded from here as we have two datasets:
+
+ - Training: (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+ - Test:(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+
+#### Process data, data load and cleaning
+```{r, echo=TRUE}
+# set library and random number generated seed for reproducibility
+library(caret)
+set.seed(12345)
+```
+
+Read training data, manipulate NAs and empty cells, adjust whitespace to have numeric data.
+
+```{r}
+Data <- read.csv("pml-training.csv", na.strings=c("NA",""), strip.white=T)
+dim(Data)
+```
+
+We can exclude time formatted data and NA-s.
+
+```{r}
+isNA <- apply(Data, 2, function(x) { sum(is.na(x)) })
+targetData <- subset(Data[, which(isNA == 0)], 
+                    select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
+dim(targetData)
+```
+
+We can use the targetData for partitioning and distribution of training and test datasets. For classification we use the *classe* column, pulled from here: (http://groupware.les.inf.puc-rio.br/har)
+
+```{r}
+inTrain <- createDataPartition(targetData$classe, p=0.7, list=F)
+training <- targetData[inTrain,]
+testing <- targetData[-inTrain,]
+```
+
+## Training Random Forest Model
+
+The most time consuming part of the report run is modelling Random Forest on the training set. (Using this particular combination of *trControl* parameters is important, as by default bootstrapping is used.)
+
+```{r cache=TRUE, message=FALSE}
+ctrl <- trainControl(allowParallel=T, method="cv", number=4)
+model <- train(classe ~ ., data=training, model="rf", trControl=ctrl)
+pred <- predict(model, newdata=testing)
+```
+
+Compare the predictions against the held-back test-set.
+
+```{r}
+sum(pred == testing$classe) / length(pred)
+confusionMatrix(testing$classe, pred)$table
+```
+
+Our forest trained model is 99.2% accurate against our test-set and this is confirmed by the confusion matrix. 
+
+Unknown values are not predicted so we fine tune our model.
+
+```{r fine tuning}
+TestData <- read.csv("pml-testing.csv", na.strings=c("NA",""), strip.white=T)
+targetTestData <- subset(TestData[, which(isNA == 0)], 
+                        select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
+predict(model, newdata=targetTestData)
+```
+
+List the most significant variables.
+
+```{r}
+varImp(model)
+```
+
+## Training a filtered Random Forest Model
+
+Filter for the top 10 most significant predictor to train and test a simpler model, that is less time consuming to run.
+
+```{r filtered model, cache=TRUE, message=FALSE}
+filtertargetData <- subset(targetData, 
+                    select=c(roll_belt, pitch_forearm, yaw_belt, magnet_dumbbell_y, pitch_belt, magnet_dumbbell_z, roll_forearm, accel_dumbbell_y, roll_dumbbell, magnet_dumbbell_x,classe))
+filterModel <- train(classe ~ ., data=filtertargetData[inTrain,], model="rf", trControl=ctrl)
+```
+
+Its accuracy on the test set is 98.4%.
+
+```{r filtered model accuracy}
+predict(filterModel, newdata=targetTestData)
+filterPred <- predict(filterModel, newdata=testing)
+sum(filterPred == testing$classe) / length(filterPred)
+confusionMatrix(testing$classe, filterPred)$table
+```
+
+## Training a Support Vector Machine
+
+for accuracy comparison to Random Forest model we run SVM
+
+```{r SVM model, cache=TRUE}
+svm <- train(classe ~ ., data=filtertargetData[inTrain,], model="svm", trControl=ctrl)
+svmPred <- predict(svm, newdata=testing)
+sum(svmPred == testing$classe) / length(svmPred)
+confusionMatrix(testing$classe, svmPred)$table
+```
+
+It scores 98.3% accuracy and its confusion matrix is only slightly less accurate than the simpler Random Forest model's.
+
+Write answer files for submission
+```{r}
+answers = rep("pred", 20)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+
+```{r}
+pml_write_files(answers)
+```
